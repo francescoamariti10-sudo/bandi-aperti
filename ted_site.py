@@ -7,10 +7,31 @@ I testi di TED sono dati non fidati: tutto viene escapato.
 import sys, os, json, html, re, unicodedata, datetime, collections
 
 src, outdir = sys.argv[1], sys.argv[2]
-form_url = sys.argv[3] if len(sys.argv) > 3 else ""
+form_url = (sys.argv[3] if len(sys.argv) > 3 else "").strip()
+BASE = os.environ.get("BASE_URL", "https://francescoamariti10-sudo.github.io/bandi-aperti/").rstrip("/") + "/"
 d = json.load(open(src))
 today = datetime.date.fromisoformat(d["generato"])
-rows = [r for r in d["rows"] if r["scadenza"]]
+# mostra solo bandi che scadono da domani in poi
+rows = [r for r in d["rows"] if r["scadenza"] and r["scadenza"] > today.isoformat()]
+
+
+def read_titolare(path="titolare.txt"):
+    """Legge 'Chiave: valore' dal file titolare.txt (Nome, Email, Partita IVA). None se manca o incompleto."""
+    if not os.path.exists(path):
+        return None
+    t = {}
+    for line in open(path, encoding="utf-8"):
+        if ":" in line:
+            k, v = line.split(":", 1)
+            t[k.strip().lower()] = v.strip()
+    return t if t.get("nome") and t.get("email") else None
+
+
+TIT = read_titolare()
+# il modulo di iscrizione compare solo se esiste anche l'informativa privacy
+CTA_ON = bool(form_url and TIT)
+if form_url and not TIT:
+    print("ATTENZIONE: manca titolare.txt (Nome, Email): il modulo di iscrizione NON viene mostrato")
 E = html.escape
 MIN_PAGE = 8  # pagine di categoria solo con abbastanza bandi
 
@@ -49,18 +70,22 @@ footer{margin-top:40px;color:var(--mut);font-size:.85rem;border-top:1px solid va
 
 def page(title, desc, body, fname):
     cta = ""
-    if form_url:
-        cta = ('<div class="cta"><strong>Vuoi ricevere ogni mattina solo i bandi del tuo settore?</strong><br>'
-               'Lascia la tua email e il settore: ti avvisiamo appena escono nuovi bandi.<br>'
+    if CTA_ON and fname != "privacy.html":
+        cta = ('<div class="cta"><strong>Vuoi ricevere solo i bandi del tuo settore?</strong><br>'
+               'Lascia la tua email e il settore: ti avvisiamo quando escono nuovi bandi. '
+               'Leggi prima l’<a href="privacy.html">informativa privacy</a>.<br>'
                '<a class="btn" href="%s">Ricevi gli avvisi</a></div>' % E(form_url, quote=True))
+    priv = ' <a href="privacy.html">Informativa privacy</a>.' if TIT else ""
     h = ('<!doctype html><html lang="it"><head><meta charset="utf-8">'
          '<meta name="viewport" content="width=device-width,initial-scale=1">'
-         '<title>%s</title><meta name="description" content="%s"><style>%s</style></head><body><main>%s%s'
+         '<title>%s</title><meta name="description" content="%s">'
+         '<link rel="canonical" href="%s"><style>%s</style></head><body><main>%s%s'
          '<footer>Fonte dei dati: TED – Tenders Electronic Daily (Unione europea), avvisi di gara di enti italiani, '
          'aggiornati al %s. Sito indipendente, non affiliato all’UE né agli enti appaltanti. '
          'I dati possono essere incompleti o cambiare: verifica sempre il bando ufficiale prima di decidere. '
-         'Questo sito riguarda solo gli appalti sopra la soglia europea.</footer></main></body></html>'
-         % (E(title), E(desc, quote=True), CSS, body, cta, today.strftime("%d/%m/%Y")))
+         'Questo sito riguarda solo gli appalti sopra la soglia europea.%s</footer></main></body></html>'
+         % (E(title), E(desc, quote=True), E(BASE + ("" if fname == "index.html" else fname), quote=True),
+            CSS, body, cta, today.strftime("%d/%m/%Y"), priv))
     open(os.path.join(outdir, fname), "w", encoding="utf-8").write(h)
 
 
@@ -125,4 +150,32 @@ for c, rs in big.items():
     page("Bandi aperti – %s – aggiornati ogni giorno" % c,
          "%d bandi di gara aperti per “%s” in Italia, con scadenza, valore stimato e link al bando ufficiale." % (len(rs), c),
          b, slug(c) + ".html")
-print("pagine:", 1 + len(big), "| bandi:", len(rows), "| categorie con pagina:", len(big), "su", len(by_cat))
+pages = ["index.html"] + [slug(c) + ".html" for c in big]
+if TIT:
+    piva = ", partita IVA %s" % TIT["partita iva"] if TIT.get("partita iva") else ""
+    pb = (
+        '<p><a href="index.html">← Tutti i bandi</a></p><h1>Informativa sul trattamento dei dati personali</h1>'
+        '<p class="lead">Ai sensi degli artt. 13 e 14 del Regolamento (UE) 2016/679 (GDPR). Aggiornata al %s.</p>'
+        '<h2>Titolare del trattamento</h2><p>%s%s – contatto: %s</p>'
+        '<h2>Quali dati raccogliamo e perché</h2><p>Solo se compili il modulo di iscrizione: indirizzo email, settore '
+        'di interesse ed eventuali parole chiave. Li usiamo esclusivamente per inviarti avvisi sui nuovi bandi di gara '
+        'che hai richiesto. Navigando le pagine di questo sito non raccogliamo dati personali con strumenti nostri.</p>'
+        '<h2>Base giuridica</h2><p>Il tuo consenso (art. 6, par. 1, lett. a GDPR), che puoi revocare in ogni momento.</p>'
+        '<h2>Per quanto tempo</h2><p>Fino alla revoca del consenso o alla tua richiesta di cancellazione.</p>'
+        '<h2>A chi vengono comunicati</h2><p>Non vendiamo e non cediamo i dati. Il modulo e l’elenco degli iscritti '
+        'sono gestiti con servizi Google (Google Forms e Fogli), che agiscono come fornitori per nostro conto e possono '
+        'trattare i dati anche fuori dall’Unione europea con le garanzie previste dalla normativa.</p>'
+        '<h2>I tuoi diritti</h2><p>Puoi chiedere accesso, rettifica, cancellazione, limitazione, portabilità e opporti '
+        'al trattamento scrivendo a %s. Puoi revocare il consenso in qualsiasi momento, e proporre reclamo al Garante '
+        'per la protezione dei dati personali (garanteprivacy.it).</p>'
+        % (today.strftime("%d/%m/%Y"), E(TIT["nome"]), E(piva), E(TIT["email"]), E(TIT["email"])))
+    page("Informativa privacy – Bandi di gara aperti", "Informativa sul trattamento dei dati personali.", pb, "privacy.html")
+    pages.append("privacy.html")
+sm = ['<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">']
+for pg in pages:
+    sm.append("<url><loc>%s</loc><lastmod>%s</lastmod></url>" % (E(BASE + ("" if pg == "index.html" else pg)), today.isoformat()))
+sm.append("</urlset>")
+open(os.path.join(outdir, "sitemap.xml"), "w", encoding="utf-8").write("".join(sm))
+open(os.path.join(outdir, "robots.txt"), "w").write("User-agent: *\nAllow: /\nSitemap: %ssitemap.xml\n" % BASE)
+print("pagine:", len(pages), "| bandi:", len(rows), "| categorie con pagina:", len(big), "su", len(by_cat),
+      "| privacy:", bool(TIT), "| modulo:", CTA_ON)
