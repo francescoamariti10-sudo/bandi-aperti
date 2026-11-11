@@ -1,0 +1,42 @@
+name: Aggiorna bandi aperti
+
+on:
+  schedule:
+    - cron: "17 5 * * *"   # ogni giorno, circa le 6:17 in Italia
+  workflow_dispatch:        # permette l'avvio manuale
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Scarica i bandi da TED e genera il sito
+        run: |
+          python3 ted_fetch.py 45 open_tenders.json
+          python3 ted_site.py open_tenders.json public "$(cat form_url.txt 2>/dev/null || true)"
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
